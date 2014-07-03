@@ -7,6 +7,7 @@
 #include "all.h"
 
 extern unsigned int GPSvalid;
+extern float AmpHoursOffset;
 unsigned int mask;
 
 stopwatch_struct* can_watch;
@@ -97,6 +98,13 @@ void CANSetup()
 	CANvars[7].New = 0;
 	memcpy(&CANvars[7].Name, "GPS Latitude",13);
 
+	//CANvars[8] is always Bus Amp Hours
+	CANvars[8].SID = TRITIUMAH_SID;
+	CANvars[8].TypeCode = TRITIUMAH_TYPE;
+	CANvars[8].Offset = TRITIUMAH_OFFSET;
+	CANvars[8].New = 0;
+	memcpy(&CANvars[8].Name, "Bus AmpHours",13);
+
 	//CANvars[NUM_CANVARS - 1] is always CANcorder heartbeat
 	CANvars[NUM_CANVARS - 1].SID = CANCORDERHEART_SID;
 	CANvars[NUM_CANVARS - 1].TypeCode = CANCORDERHEART_TYPE;
@@ -126,7 +134,7 @@ void CANSetup()
 	ECanaShadow.CANMD.all = ECanaRegs.CANMD.all;
 	ECanaShadow.CANME.all = ECanaRegs.CANME.all;
 
-	//todo USER: Node specifc CAN setup
+
 	EALLOW;
 
 	// create mailbox for all Receive and transmit IDs
@@ -240,6 +248,17 @@ void CANSetup()
 	ECanaShadow.CANMIM.bit.MIM9  = 1; 		//int enable
 	ECanaShadow.CANMIL.bit.MIL9  = 1;  		// Int.-Level MB#0  -> I1EN
 
+	//Bus Amp Hours Receive
+	ECanaMboxes.MBOX10.MSGID.bit.IDE = 0; 	//standard id
+	ECanaMboxes.MBOX10.MSGID.bit.AME = 0;	// all bit must match
+	ECanaMboxes.MBOX10.MSGID.bit.AAM = 0; 	// no RTR AUTO TRANSMIT
+	ECanaMboxes.MBOX10.MSGCTRL.bit.DLC = 8;
+	ECanaMboxes.MBOX10.MSGID.bit.STDMSGID = TRITIUMAH_SID;
+	ECanaShadow.CANMD.bit.MD10 = 1;			//receive
+	ECanaShadow.CANME.bit.ME10 = 1;			//enable
+	ECanaShadow.CANMIM.bit.MIM10  = 1; 		//int enable
+	ECanaShadow.CANMIL.bit.MIL10  = 1; 		// Int.-Level MB#0  -> I1EN
+
 	//CANcorder heartbeat RECEIVE
 	ECanaMboxes.MBOX30.MSGID.bit.IDE = 0; 	//standard id
 	ECanaMboxes.MBOX30.MSGID.bit.AME = 0;	// all bit must match
@@ -349,13 +368,13 @@ void ClearMailBoxes()
 
 char FillCAN(unsigned int Mbox)
 {
-	//todo USER: setup for all transmit MBOXs
+
 	struct ECAN_REGS ECanaShadow;
 	ECanaShadow.CANMC.all = ECanaRegs.CANMC.all;
 	switch (Mbox)								//choose mailbox
 	{
 	case HEARTBEAT_BOX:
-		//todo Nathan define heartbeat
+
 		EALLOW;
 		ECanaShadow.CANMC.bit.MBNR = Mbox;
 		ECanaShadow.CANMC.bit.CDR = 1;
@@ -385,7 +404,7 @@ void SendCAN(unsigned int Mbox)
 	mask = 1 << Mbox;
 	ECanaRegs.CANTRS.all = mask;
 
-	//todo Nathan: calibrate sendcan stopwatch
+
 
 	ECanaShadow.CANMC.all = ECanaRegs.CANMC.all;
 	if (ECanaShadow.CANMC.bit.CCR == 1)
@@ -423,11 +442,11 @@ __interrupt void ECAN1INTA_ISR(void)  // eCAN-A
   	unsigned int mailbox_nr;
   	ECanaShadow.CANGIF1.bit.MIV1 =  ECanaRegs.CANGIF1.bit.MIV1;
   	mailbox_nr = ECanaShadow.CANGIF1.bit.MIV1;
-  	//todo USER: Setup ops command
+
   	switch(mailbox_nr)
   	{
   	case COMMAND_BOX:
-  			//todo Nathan: Define Command frame
+
   			//proposed:
   			//HIGH 4 BYTES = Uint32 ID
   			//LOW 4 BYTES = Uint32 change to
@@ -447,7 +466,6 @@ __interrupt void ECAN1INTA_ISR(void)  // eCAN-A
 			ECanaRegs.CANRMP.bit.RMP0 = 1;
 	break;
 
-		//todo USER: Setup other reads
 	case VARIABLE1_BOX:
 		CANvars[0].data.U32 = ECanaMboxes.MBOX2.MDH.all;
 		CANvars[0].data.U64 = CANvars[0].data.U64 << 32L;
@@ -528,6 +546,17 @@ __interrupt void ECAN1INTA_ISR(void)  // eCAN-A
 		CANvars[7].New = 1;
 		StopWatchRestart(CANvars[7].Timeout);
 		ECanaRegs.CANRMP.bit.RMP9 = 1;
+	break;
+
+	case TRITIUMAH_BOX:
+		CANvars[8].data.U32 = ECanaMboxes.MBOX10.MDH.all;
+		CANvars[8].data.U64 = CANvars[8].data.U64 << 32L;
+		CANvars[8].data.U32 = ECanaMboxes.MBOX10.MDL.all;
+		CANvars[8].New = 1;
+		//Add offset to value from tritium
+		CANvars[8].data.F32 = CANvars[8].data.F32 + AmpHoursOffset;
+		StopWatchRestart(CANvars[8].Timeout);
+		ECanaRegs.CANRMP.bit.RMP10 = 1;
 	break;
 
 	case CANCORDERHEART_BOX:
